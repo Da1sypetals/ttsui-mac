@@ -24,8 +24,12 @@ Output Protocol:
     stderr: Progress lines in format PROGRESS: <percent> <status_message>
 """
 
-import argparse
 import os
+
+# Set HF endpoint for faster downloads in China (optional)
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+
+import argparse
 import sys
 import numpy as np
 import soundfile as sf
@@ -150,17 +154,13 @@ def run_design(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="TTS Generation Script for TTSUI-mac"
-    )
+    parser = argparse.ArgumentParser(description="TTS Generation Script for TTSUI-mac")
     subparsers = parser.add_subparsers(dest="mode", required=True, help="TTS mode")
 
     # Clone mode
     clone_parser = subparsers.add_parser("clone", help="Voice cloning mode")
     clone_parser.add_argument(
-        "--model",
-        required=True,
-        help="Model name (e.g., mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16)"
+        "--model", required=True, help="Model name (e.g., mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16)"
     )
     clone_parser.add_argument("--text", required=True, help="Target text to synthesize")
     clone_parser.add_argument("--ref-audio", required=True, help="Path to reference audio file")
@@ -170,39 +170,25 @@ def main():
     # Control mode
     control_parser = subparsers.add_parser("control", help="Custom voice control mode")
     control_parser.add_argument(
-        "--model",
-        required=True,
-        help="Model name (e.g., mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16)"
+        "--model", required=True, help="Model name (e.g., mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16)"
     )
     control_parser.add_argument("--text", required=True, help="Target text to synthesize")
     control_parser.add_argument(
         "--speaker",
         required=True,
         choices=["Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden"],
-        help="Speaker name"
+        help="Speaker name",
     )
-    control_parser.add_argument(
-        "--language",
-        required=True,
-        choices=["Chinese", "English"],
-        help="Language"
-    )
+    control_parser.add_argument("--language", required=True, choices=["Chinese", "English"], help="Language")
     control_parser.add_argument("--instruct", default="", help="Emotion/style instructions")
     control_parser.add_argument("--output", required=True, help="Output WAV file path")
 
     # Design mode
     design_parser = subparsers.add_parser("design", help="Voice design mode")
     design_parser.add_argument("--text", required=True, help="Target text to synthesize")
+    design_parser.add_argument("--language", required=True, choices=["Chinese", "English"], help="Language")
     design_parser.add_argument(
-        "--language",
-        required=True,
-        choices=["Chinese", "English"],
-        help="Language"
-    )
-    design_parser.add_argument(
-        "--instruct",
-        required=True,
-        help="Voice description (e.g., 'A cheerful young female voice...')"
+        "--instruct", required=True, help="Voice description (e.g., 'A cheerful young female voice...')"
     )
     design_parser.add_argument("--output", required=True, help="Output WAV file path")
 
