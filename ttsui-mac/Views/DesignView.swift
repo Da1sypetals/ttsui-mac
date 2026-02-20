@@ -93,6 +93,9 @@ struct DesignView: View {
                         progress: progressValue,
                         progressMessage: progressMessage,
                         isEnabled: viewModel.canGenerate,
+                        cancelAction: {
+                            viewModel.cancel()
+                        },
                         action: {
                             Task {
                                 await viewModel.generate()

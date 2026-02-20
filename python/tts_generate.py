@@ -26,17 +26,14 @@ Output Protocol:
 
 import os
 
-# Set HF endpoint for faster downloads in China (optional)
-os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+# Set HF endpoint for faster downloads in China
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
 import argparse
 import sys
 import numpy as np
 import soundfile as sf
 from pathlib import Path
-
-# Set HF endpoint for faster downloads in China (optional)
-os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 from mlx_audio.tts.utils import load_model
 
