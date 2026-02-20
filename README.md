@@ -1,5 +1,7 @@
 # ttsui-mac
 
+Completely vibe-coded. Assisted by GLM-5.
+
 ## Run
 
 ### Prepare Python environment
