@@ -19,3 +19,7 @@ Subprocess is a workaround. You should refactor this to a more robust method of 
 ## Save state
 
 When I input something in control mode, then switch to clone mode, things in control mode should not be lost. Everything should only be lost when app is exited.
+
+## Mark dialects
+
+@llm_docs/qwen_tts.md Mark in UI explicitly about the speakers that speaks dialects instead of mandarin.
