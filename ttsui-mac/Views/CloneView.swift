@@ -9,7 +9,7 @@ import SwiftUI
 
 /// View for Clone mode - voice cloning from reference audio
 struct CloneView: View {
-    @StateObject private var viewModel = CloneViewModel()
+    @ObservedObject var viewModel: CloneViewModel
 
     var body: some View {
         ScrollView {
@@ -226,6 +226,6 @@ struct RecordButton: View {
 }
 
 #Preview {
-    CloneView()
+    CloneView(viewModel: CloneViewModel())
         .frame(width: 500, height: 800)
 }

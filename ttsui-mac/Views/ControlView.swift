@@ -9,7 +9,7 @@ import SwiftUI
 
 /// View for Control mode - predefined voices with emotion control
 struct ControlView: View {
-    @StateObject private var viewModel = ControlViewModel()
+    @ObservedObject var viewModel: ControlViewModel
 
     var body: some View {
         ScrollView {
@@ -157,6 +157,6 @@ struct ControlView: View {
 }
 
 #Preview {
-    ControlView()
+    ControlView(viewModel: ControlViewModel())
         .frame(width: 500, height: 800)
 }

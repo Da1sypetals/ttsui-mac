@@ -12,6 +12,11 @@ struct ContentView: View {
     @State private var selectedMode: TTSMode = .clone
     @ObservedObject private var ttsService = TTSService.shared
 
+    // ViewModels owned at ContentView level to persist state across mode switches
+    @StateObject private var cloneViewModel = CloneViewModel()
+    @StateObject private var controlViewModel = ControlViewModel()
+    @StateObject private var designViewModel = DesignViewModel()
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -44,11 +49,11 @@ struct ContentView: View {
             Group {
                 switch selectedMode {
                 case .clone:
-                    CloneView()
+                    CloneView(viewModel: cloneViewModel)
                 case .control:
-                    ControlView()
+                    ControlView(viewModel: controlViewModel)
                 case .design:
-                    DesignView()
+                    DesignView(viewModel: designViewModel)
                 }
             }
             .frame(maxHeight: .infinity)

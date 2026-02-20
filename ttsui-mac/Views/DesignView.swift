@@ -9,7 +9,7 @@ import SwiftUI
 
 /// View for Design mode - create any voice from text description
 struct DesignView: View {
-    @StateObject private var viewModel = DesignViewModel()
+    @ObservedObject var viewModel: DesignViewModel
 
     var body: some View {
         ScrollView {
@@ -148,6 +148,6 @@ struct DesignView: View {
 }
 
 #Preview {
-    DesignView()
+    DesignView(viewModel: DesignViewModel())
         .frame(width: 500, height: 800)
 }
