@@ -10,9 +10,9 @@ Clone mode should have speakers:
 
 ## Refactor model inference
 
-Subprocess is a workaround. You should refactor this to a more robust method of IPC. Note that:
+Subprocess is a workaround. You should refactor this to a HTTP server as a more robust method of IPC. Note that:
 - It should be able to take / receive all input and output as current one, e.g. python script output stdout/stderr to use as log, etc.
-- You MUST NOT use stdout/stderr for communication.
+- You MUST NOT use stdout/stderr for any kind of communication.
 - You may need to modify both Swift code and Python code. Make the code robust and clean. You can refactor part of the code if needed.
 
 
