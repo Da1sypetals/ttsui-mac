@@ -11,10 +11,12 @@ Clone mode should have speakers:
 ## Refactor model inference
 
 Subprocess is a workaround. You should refactor this to a HTTP server as a more robust method of IPC. Note that:
-- It should be able to take / receive all input and output as current one, e.g. python script output stdout/stderr to use as log, etc.
 - You MUST NOT use stdout/stderr for any kind of communication.
 - You may need to modify both Swift code and Python code. Make the code robust and clean. You can refactor part of the code if needed.
 - Require user to manually load/unload models. Only allow user to select models that are loaded. Unloading a model should REALLY release resources; you must achieve this or explicitly stop to inform me of why this is not achieveable.
+- You MUST verify the project compiles and can build after each part of the code is completed.
+- DO NOT use any sort of Mock, Skip, etc. to fool me or to try to get the app functioning while not implementing the real functionailty. You will be harshly punished if you did so.
+- When python server side fails, an explicit and 
 
 
 ## Save state

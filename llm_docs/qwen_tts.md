@@ -69,3 +69,5 @@ audio = results[0].audio  # mx.array
 **Chinese:** `Vivian`, `Serena`, `Uncle_Fu`, `Dylan` (Beijing Dialect), `Eric` (Sichuan Dialect)
 
 **English:** `Ryan`, `Aiden`
+
+<!-- This document is from https://github.com/Blaizzy/mlx-audio/blob/main/mlx_audio/tts/models/qwen3_tts/README.md -->
