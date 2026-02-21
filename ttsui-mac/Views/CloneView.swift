@@ -15,14 +15,22 @@ struct CloneView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 // Model Selection
-                GroupBox(label: Label("Model", systemImage: "cpu")) {
-                    Picker("Model", selection: $viewModel.selectedModel) {
-                        ForEach(CloneModel.allCases) { model in
-                            Text(model.displayName).tag(model)
+                ModelSelectionGroup(
+                    title: "Model",
+                    systemImage: "cpu",
+                    models: viewModel.modelSelectionItems,
+                    selectedModelId: $viewModel.selectedModelId,
+                    onLoad: { modelId in
+                        Task {
+                            await viewModel.loadModel(modelId: modelId)
+                        }
+                    },
+                    onUnload: { modelId in
+                        Task {
+                            await viewModel.unloadModel(modelId: modelId)
                         }
                     }
-                    .pickerStyle(.radioGroup)
-                }
+                )
 
                 // Reference Audio Section
                 GroupBox(label: Label("Reference Audio", systemImage: "waveform")) {

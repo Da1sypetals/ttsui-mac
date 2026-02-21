@@ -52,11 +52,9 @@ struct LogPanel: View {
                 .background(Color(NSColor.textBackgroundColor))
                 .cornerRadius(6)
                 .frame(maxHeight: maxHeight)
-                .onChange(of: logEntries.count) { _, _ in
+                .onChange(of: logEntries.count) { _ in
                     if let lastEntry = logEntries.last {
-                        withAnimation {
-                            proxy.scrollTo(lastEntry.id, anchor: .bottom)
-                        }
+                        proxy.scrollTo(lastEntry.id, anchor: .bottom)
                     }
                 }
             }

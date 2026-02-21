@@ -8,43 +8,55 @@
 import Foundation
 import Combine
 
-/// High-level TTS service that coordinates Python subprocess execution
-class TTSService: ObservableObject, PythonSubprocessDelegate {
+/// High-level TTS service that coordinates HTTP communication with Python server
+class TTSService: ObservableObject {
     static let shared = TTSService()
 
     @Published var state: TTSState = .idle
     @Published var logEntries: [LogEntry] = []
 
-    private let subprocess = PythonSubprocess()
+    private let httpClient = TTSHTTPClient.shared
     private let fileService = FileService.shared
 
-    private init() {
-        subprocess.delegate = self
+    private init() {}
+
+    /// Get the current server port
+    private var port: Int {
+        TTSServerManager.shared.currentPort
     }
 
-    // MARK: - PythonSubprocessDelegate
+    // MARK: - Log and Progress Handling (called from TTSServerManager)
 
-    func subprocess(_ subprocess: PythonSubprocess, didOutputLog entry: LogEntry) {
-        DispatchQueue.main.async {
-            self.logEntries.append(entry)
-        }
+    /// Add a log entry (called from TTSServerManager SSE stream)
+    func addLogEntry(_ entry: LogEntry) {
+        logEntries.append(entry)
     }
 
-    func subprocess(_ subprocess: PythonSubprocess, didUpdateProgress percent: Int, message: String) {
-        DispatchQueue.main.async {
-            self.state = .generating(progress: percent, message: message)
-        }
+    /// Update progress state (called from TTSServerManager SSE stream)
+    func updateProgress(percent: Int, message: String) {
+        state = .generating(progress: percent, message: message)
+    }
+
+    // MARK: - Model Management
+
+    /// Load a model
+    func loadModel(modelId: String) async throws -> LoadModelResponse {
+        return try await httpClient.loadModel(port: port, modelId: modelId)
+    }
+
+    /// Unload a model
+    func unloadModel(modelId: String) async throws -> UnloadModelResponse {
+        return try await httpClient.unloadModel(port: port, modelId: modelId)
+    }
+
+    /// List all models
+    func listModels() async throws -> ModelsListResponse {
+        return try await httpClient.listModels(port: port)
     }
 
     // MARK: - TTS Generation Methods
 
     /// Generate audio using Clone mode
-    /// - Parameters:
-    ///   - model: Model to use (0.6B or 1.7B)
-    ///   - text: Target text to synthesize
-    ///   - refAudio: Reference audio file URL
-    ///   - refText: Transcript of reference audio (optional)
-    /// - Returns: URL to generated audio file
     func clone(model: CloneModel, text: String, refAudio: URL?, refText: String?) async throws -> URL {
         guard let refAudio = refAudio else {
             throw TTSUIError.invalidInput("Reference audio is required")
@@ -57,27 +69,41 @@ class TTSService: ObservableObject, PythonSubprocessDelegate {
 
         // Create output path
         let outputPath = fileService.generateOutputPath(mode: .clone)
+        try fileService.ensureDirectoryExists(for: .clone)
 
-        let request = CloneRequest(
-            model: model,
-            text: trimmedText,
-            refAudioURL: refAudio,
-            refText: refText ?? ""
-        )
+        // Set loading state
+        await MainActor.run {
+            self.state = .loading
+        }
 
-        let args = request.toArguments(outputPath: outputPath.path)
+        do {
+            let response = try await httpClient.generateClone(
+                port: port,
+                modelId: model.rawValue,
+                text: trimmedText,
+                refAudioPath: refAudio.path,
+                refText: refText,
+                outputPath: outputPath.path
+            )
 
-        return try await runGeneration(mode: .clone, args: args, outputPath: outputPath)
+            if response.success {
+                let outputURL = URL(fileURLWithPath: response.outputPath)
+                await MainActor.run {
+                    self.state = .completed(outputURL: outputURL)
+                }
+                return outputURL
+            } else {
+                throw TTSUIError.generationFailed(response.error ?? "Unknown error")
+            }
+        } catch {
+            await MainActor.run {
+                self.state = .failed(error: error.localizedDescription)
+            }
+            throw error
+        }
     }
 
     /// Generate audio using Control mode
-    /// - Parameters:
-    ///   - model: Model to use (0.6B or 1.7B)
-    ///   - text: Target text to synthesize
-    ///   - speaker: Speaker name
-    ///   - language: Language (Chinese or English)
-    ///   - instruct: Emotion/style instructions (optional)
-    /// - Returns: URL to generated audio file
     func control(model: ControlModel, text: String, speaker: TTSSpeaker, language: TTSLanguage, instruct: String?) async throws -> URL {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty else {
@@ -86,26 +112,42 @@ class TTSService: ObservableObject, PythonSubprocessDelegate {
 
         // Create output path
         let outputPath = fileService.generateOutputPath(mode: .control)
+        try fileService.ensureDirectoryExists(for: .control)
 
-        let request = ControlRequest(
-            model: model,
-            text: trimmedText,
-            speaker: speaker,
-            language: language,
-            instruct: instruct ?? ""
-        )
+        // Set loading state
+        await MainActor.run {
+            self.state = .loading
+        }
 
-        let args = request.toArguments(outputPath: outputPath.path)
+        do {
+            let response = try await httpClient.generateControl(
+                port: port,
+                modelId: model.rawValue,
+                text: trimmedText,
+                speaker: speaker.rawValue,
+                language: language.rawValue,
+                instruct: instruct,
+                outputPath: outputPath.path
+            )
 
-        return try await runGeneration(mode: .control, args: args, outputPath: outputPath)
+            if response.success {
+                let outputURL = URL(fileURLWithPath: response.outputPath)
+                await MainActor.run {
+                    self.state = .completed(outputURL: outputURL)
+                }
+                return outputURL
+            } else {
+                throw TTSUIError.generationFailed(response.error ?? "Unknown error")
+            }
+        } catch {
+            await MainActor.run {
+                self.state = .failed(error: error.localizedDescription)
+            }
+            throw error
+        }
     }
 
     /// Generate audio using Design mode
-    /// - Parameters:
-    ///   - text: Target text to synthesize
-    ///   - language: Language (Chinese or English)
-    ///   - instruct: Voice description
-    /// - Returns: URL to generated audio file
     func design(text: String, language: TTSLanguage, instruct: String) async throws -> URL {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty else {
@@ -119,37 +161,31 @@ class TTSService: ObservableObject, PythonSubprocessDelegate {
 
         // Create output path
         let outputPath = fileService.generateOutputPath(mode: .design)
+        try fileService.ensureDirectoryExists(for: .design)
 
-        let request = DesignRequest(
-            text: trimmedText,
-            language: language,
-            instruct: trimmedInstruct
-        )
-
-        let args = request.toArguments(outputPath: outputPath.path)
-
-        return try await runGeneration(mode: .design, args: args, outputPath: outputPath)
-    }
-
-    /// Run generation with common handling
-    private func runGeneration(mode: TTSMode, args: [String], outputPath: URL) async throws -> URL {
-        // Ensure output directory exists
-        try fileService.ensureDirectoryExists(for: mode)
-
-        // Clear previous logs
+        // Set loading state
         await MainActor.run {
-            self.logEntries.removeAll()
             self.state = .loading
         }
 
         do {
-            let result = try await subprocess.run(mode: mode, args: args)
+            let response = try await httpClient.generateDesign(
+                port: port,
+                text: trimmedText,
+                language: language.rawValue,
+                instruct: trimmedInstruct,
+                outputPath: outputPath.path
+            )
 
-            await MainActor.run {
-                self.state = .completed(outputURL: result)
+            if response.success {
+                let outputURL = URL(fileURLWithPath: response.outputPath)
+                await MainActor.run {
+                    self.state = .completed(outputURL: outputURL)
+                }
+                return outputURL
+            } else {
+                throw TTSUIError.generationFailed(response.error ?? "Unknown error")
             }
-
-            return result
         } catch {
             await MainActor.run {
                 self.state = .failed(error: error.localizedDescription)
@@ -160,12 +196,6 @@ class TTSService: ObservableObject, PythonSubprocessDelegate {
 
     /// Cancel current generation
     func cancel() {
-        subprocess.cancel()
         state = .idle
-    }
-
-    /// Clear log entries
-    func clearLogs() {
-        logEntries.removeAll()
     }
 }

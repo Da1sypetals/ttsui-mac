@@ -25,16 +25,24 @@ struct LogEntry: Identifiable, Equatable {
     }
 }
 
-/// Progress update parsed from stderr
+/// Progress update parsed from log content
 struct ProgressUpdate {
     let percent: Int
     let message: String
 
     init?(from string: String) {
         // Parse "PROGRESS: <percent> <message>" format
-        guard string.hasPrefix("PROGRESS:") else { return nil }
+        // The string might have a level prefix like "[INFO] PROGRESS: ..."
+        var content = string
 
-        let parts = string.dropFirst("PROGRESS:".count).trimmingCharacters(in: .whitespaces).split(separator: " ", maxSplits: 1)
+        // Strip level prefix if present
+        if let bracketRange = content.range(of: "] ") {
+            content = String(content[bracketRange.upperBound...])
+        }
+
+        guard content.hasPrefix("PROGRESS:") else { return nil }
+
+        let parts = content.dropFirst("PROGRESS:".count).trimmingCharacters(in: .whitespaces).split(separator: " ", maxSplits: 1)
 
         guard parts.count >= 2,
               let percent = Int(parts[0]) else { return nil }
@@ -84,6 +92,21 @@ enum TTSState: Equatable {
             return l == r
         default:
             return false
+        }
+    }
+}
+
+/// Errors for TTSUI
+enum TTSUIError: LocalizedError {
+    case invalidInput(String)
+    case generationFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidInput(let message):
+            return "Invalid input: \(message)"
+        case .generationFailed(let message):
+            return "TTS generation failed: \(message)"
         }
     }
 }

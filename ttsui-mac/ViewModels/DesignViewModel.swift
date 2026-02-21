@@ -10,6 +10,10 @@ import Combine
 
 /// ViewModel for Design mode
 class DesignViewModel: ObservableObject {
+    // Model state (Design mode uses a fixed VoiceDesign model)
+    @Published var modelState: ModelState = .unloaded
+    @Published var modelInfo: ModelInfo?
+
     // Input state
     @Published var selectedLanguage: TTSLanguage = .english
     @Published var targetText: String = ""
@@ -25,19 +29,129 @@ class DesignViewModel: ObservableObject {
     private let fileService = FileService.shared
     private let audioService = AudioService.shared
 
+    // The VoiceDesign model ID
+    static let modelId = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
+
     // MARK: - Computed Properties
 
     /// Whether the form is valid for generation
     var canGenerate: Bool {
         let trimmedText = targetText.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedDescription = voiceDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !trimmedText.isEmpty && !trimmedDescription.isEmpty && !state.isProcessing
+        guard !trimmedText.isEmpty else { return false }
+        guard !trimmedDescription.isEmpty else { return false }
+        guard !state.isProcessing else { return false }
+        guard modelState == .loaded else { return false }
+        return true
+    }
+
+    // MARK: - Initialization
+
+    init() {
+        // Load initial model state
+        Task {
+            await refreshModelState()
+        }
+    }
+
+    // MARK: - Model Management
+
+    /// Refresh model state from server
+    func refreshModelState() async {
+        do {
+            let response = try await ttsService.listModels()
+            await MainActor.run {
+                if let model = response.models.first(where: { $0.modelId == Self.modelId }) {
+                    self.modelInfo = model
+                    self.modelState = model.state
+                }
+            }
+        } catch {
+            print("Failed to refresh model state: \(error)")
+        }
+    }
+
+    /// Load the VoiceDesign model
+    func loadModel() async {
+        await MainActor.run {
+            self.modelState = .loading
+        }
+
+        do {
+            let response = try await ttsService.loadModel(modelId: Self.modelId)
+            await MainActor.run {
+                self.modelState = ModelState(rawValue: response.state) ?? .error
+                self.modelInfo = ModelInfo(
+                    modelId: response.modelId,
+                    state: self.modelState,
+                    memory: MemoryStats(
+                        beforeMb: response.memory.beforeMb,
+                        afterMb: response.memory.afterMb,
+                        deltaMb: response.memory.deltaMb
+                    ),
+                    loadTimeSeconds: response.loadTimeSeconds,
+                    error: response.error
+                )
+            }
+        } catch {
+            await MainActor.run {
+                self.modelState = .error
+                self.modelInfo = ModelInfo(
+                    modelId: Self.modelId,
+                    state: .error,
+                    memory: MemoryStats(beforeMb: nil, afterMb: nil, deltaMb: nil),
+                    loadTimeSeconds: nil,
+                    error: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    /// Unload the VoiceDesign model
+    func unloadModel() async {
+        await MainActor.run {
+            self.modelState = .unloading
+        }
+
+        do {
+            let response = try await ttsService.unloadModel(modelId: Self.modelId)
+            await MainActor.run {
+                self.modelState = ModelState(rawValue: response.state) ?? .unloaded
+                self.modelInfo = ModelInfo(
+                    modelId: response.modelId,
+                    state: self.modelState,
+                    memory: MemoryStats(
+                        beforeMb: response.memory.beforeMb,
+                        afterMb: response.memory.afterMb,
+                        deltaMb: response.memory.deltaMb
+                    ),
+                    loadTimeSeconds: nil,
+                    error: response.error
+                )
+            }
+        } catch {
+            await MainActor.run {
+                self.modelState = .error
+                self.modelInfo = ModelInfo(
+                    modelId: Self.modelId,
+                    state: .error,
+                    memory: MemoryStats(beforeMb: nil, afterMb: nil, deltaMb: nil),
+                    loadTimeSeconds: nil,
+                    error: error.localizedDescription
+                )
+            }
+        }
     }
 
     // MARK: - Actions
 
     /// Generate audio
     func generate() async {
+        guard modelState == .loaded else {
+            errorMessage = "VoiceDesign model is not loaded"
+            return
+        }
+
         let trimmedText = targetText.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedDescription = voiceDescription.trimmingCharacters(in: .whitespacesAndNewlines)
 

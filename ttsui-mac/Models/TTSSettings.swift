@@ -15,8 +15,8 @@ class TTSSettings: ObservableObject {
     /// Python executable path
     @Published var pythonPath: String
 
-    /// Default timeout for TTS generation (seconds)
-    let defaultTimeout: TimeInterval = 1800
+    /// Base server port for HTTP communication (actual port found dynamically)
+    let serverPort: Int = 8765
 
     private init() {
         // Python path resolution order:

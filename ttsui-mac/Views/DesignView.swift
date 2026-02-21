@@ -14,19 +14,82 @@ struct DesignView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                // Model Info
+                // Model Info with Load/Unload
                 GroupBox(label: Label("Model", systemImage: "cpu")) {
                     HStack {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                        Text("Qwen3-TTS-12Hz-1.7B-VoiceDesign")
-                            .fontWeight(.medium)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Qwen3-TTS-12Hz-1.7B-VoiceDesign")
+                                .fontWeight(.medium)
+                            Text("(only option for voice design)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
                         Spacer()
-                        Text("(only option for voice design)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+
+                        // Load/Unload button
+                        switch viewModel.modelState {
+                        case .unloaded:
+                            Button("Load") {
+                                Task {
+                                    await viewModel.loadModel()
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+
+                        case .loading:
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("Loading...")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                        case .loaded:
+                            Button("Unload") {
+                                Task {
+                                    await viewModel.unloadModel()
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .tint(.red)
+
+                        case .unloading:
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("Unloading...")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                        case .error:
+                            Button("Retry") {
+                                Task {
+                                    await viewModel.loadModel()
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .tint(.orange)
+                        }
                     }
                     .padding(.vertical, 4)
+
+                    // Show error if any
+                    if viewModel.modelState == .error, let info = viewModel.modelInfo, let error = info.error {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.red)
+                            Text("Error: \(error)")
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                        }
+                        .padding(.top, 4)
+                    }
                 }
 
                 // Language Selection

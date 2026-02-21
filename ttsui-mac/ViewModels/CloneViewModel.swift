@@ -10,8 +10,11 @@ import Combine
 
 /// ViewModel for Clone mode
 class CloneViewModel: ObservableObject {
+    // Model state
+    @Published var selectedModelId: String?
+    @Published var modelStates: [String: ModelInfo] = [:]
+
     // Input state
-    @Published var selectedModel: CloneModel = .large
     @Published var targetText: String = ""
     @Published var referenceText: String = ""
     @Published var referenceAudioURL: URL? {
@@ -43,15 +46,155 @@ class CloneViewModel: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
 
+    // MARK: - Available Models
+
+    /// Available clone models
+    static let availableModels: [(id: String, displayName: String)] = [
+        ("mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16", "0.6B-Base (Fast)"),
+        ("mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16", "1.7B-Base (Quality)")
+    ]
+
+    /// Model selection items for UI
+    var modelSelectionItems: [ModelSelectionItem] {
+        Self.availableModels.compactMap { (id, displayName) in
+            guard let info = modelStates[id] else {
+                return ModelSelectionItem(
+                    modelInfo: ModelInfo(
+                        modelId: id,
+                        state: .unloaded,
+                        memory: MemoryStats(beforeMb: nil, afterMb: nil, deltaMb: nil),
+                        loadTimeSeconds: nil,
+                        error: nil
+                    ),
+                    displayName: displayName
+                )
+            }
+            return ModelSelectionItem(modelInfo: info, displayName: displayName)
+        }
+    }
+
+    // MARK: - Initialization
+
     init() {
         // Forward audioRecorder's objectWillChange to this view model
-        // so SwiftUI re-renders when recorder state changes
         audioRecorder.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.objectWillChange.send()
             }
             .store(in: &cancellables)
+
+        // Load initial model states
+        Task {
+            await refreshModelStates()
+        }
+    }
+
+    // MARK: - Model Management
+
+    /// Refresh model states from server
+    func refreshModelStates() async {
+        do {
+            let response = try await ttsService.listModels()
+            await MainActor.run {
+                var newStates: [String: ModelInfo] = [:]
+                for model in response.models {
+                    if Self.availableModels.contains(where: { $0.id == model.modelId }) {
+                        newStates[model.modelId] = model
+                    }
+                }
+                self.modelStates = newStates
+            }
+        } catch {
+            print("Failed to refresh model states: \(error)")
+        }
+    }
+
+    /// Load a model
+    func loadModel(modelId: String) async {
+        // Update state to loading
+        await MainActor.run {
+            modelStates[modelId] = ModelInfo(
+                modelId: modelId,
+                state: .loading,
+                memory: MemoryStats(beforeMb: nil, afterMb: nil, deltaMb: nil),
+                loadTimeSeconds: nil,
+                error: nil
+            )
+        }
+
+        do {
+            let response = try await ttsService.loadModel(modelId: modelId)
+            await MainActor.run {
+                modelStates[modelId] = ModelInfo(
+                    modelId: response.modelId,
+                    state: ModelState(rawValue: response.state) ?? .error,
+                    memory: MemoryStats(
+                        beforeMb: response.memory.beforeMb,
+                        afterMb: response.memory.afterMb,
+                        deltaMb: response.memory.deltaMb
+                    ),
+                    loadTimeSeconds: response.loadTimeSeconds,
+                    error: response.error
+                )
+            }
+        } catch {
+            await MainActor.run {
+                modelStates[modelId] = ModelInfo(
+                    modelId: modelId,
+                    state: .error,
+                    memory: MemoryStats(beforeMb: nil, afterMb: nil, deltaMb: nil),
+                    loadTimeSeconds: nil,
+                    error: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    /// Unload a model
+    func unloadModel(modelId: String) async {
+        // Update state to unloading
+        await MainActor.run {
+            modelStates[modelId] = ModelInfo(
+                modelId: modelId,
+                state: .unloading,
+                memory: MemoryStats(beforeMb: nil, afterMb: nil, deltaMb: nil),
+                loadTimeSeconds: nil,
+                error: nil
+            )
+        }
+
+        do {
+            let response = try await ttsService.unloadModel(modelId: modelId)
+            await MainActor.run {
+                modelStates[modelId] = ModelInfo(
+                    modelId: response.modelId,
+                    state: ModelState(rawValue: response.state) ?? .unloaded,
+                    memory: MemoryStats(
+                        beforeMb: response.memory.beforeMb,
+                        afterMb: response.memory.afterMb,
+                        deltaMb: response.memory.deltaMb
+                    ),
+                    loadTimeSeconds: nil,
+                    error: response.error
+                )
+
+                // Deselect if this was the selected model
+                if selectedModelId == modelId {
+                    selectedModelId = nil
+                }
+            }
+        } catch {
+            await MainActor.run {
+                modelStates[modelId] = ModelInfo(
+                    modelId: modelId,
+                    state: .error,
+                    memory: MemoryStats(beforeMb: nil, afterMb: nil, deltaMb: nil),
+                    loadTimeSeconds: nil,
+                    error: error.localizedDescription
+                )
+            }
+        }
     }
 
     // MARK: - Audio Source
@@ -78,7 +221,12 @@ class CloneViewModel: ObservableObject {
     /// Whether the form is valid for generation
     var canGenerate: Bool {
         let trimmedText = targetText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !trimmedText.isEmpty && effectiveReferenceAudio != nil && !state.isProcessing
+        guard !trimmedText.isEmpty else { return false }
+        guard effectiveReferenceAudio != nil else { return false }
+        guard !state.isProcessing else { return false }
+        guard let modelId = selectedModelId else { return false }
+        guard let modelInfo = modelStates[modelId], modelInfo.state == .loaded else { return false }
+        return true
     }
 
     /// The effective reference audio URL based on source
@@ -131,6 +279,16 @@ class CloneViewModel: ObservableObject {
             return
         }
 
+        guard let modelId = selectedModelId else {
+            errorMessage = "Please select a model"
+            return
+        }
+
+        guard let modelInfo = modelStates[modelId], modelInfo.state == .loaded else {
+            errorMessage = "Selected model is not loaded"
+            return
+        }
+
         let trimmedText = targetText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty else {
             errorMessage = "Target text is required"
@@ -143,8 +301,16 @@ class CloneViewModel: ObservableObject {
         }
 
         do {
+            // Find the CloneModel enum from the modelId
+            let cloneModel: CloneModel
+            if modelId.contains("0.6B") {
+                cloneModel = .small
+            } else {
+                cloneModel = .large
+            }
+
             let outputURL = try await ttsService.clone(
-                model: selectedModel,
+                model: cloneModel,
                 text: trimmedText,
                 refAudio: refAudio,
                 refText: referenceText.isEmpty ? nil : referenceText
