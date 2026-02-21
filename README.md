@@ -1,6 +1,6 @@
 # ttsui-mac
 
-Completely vibe-coded. Assisted by GLM-5.
+Wrapper around [Qwen3-TTS](https://qwen.ai/blog?id=qwen3tts-0115). Completely vibe-coded. Assisted by GLM-5.
 
 ## Run
 

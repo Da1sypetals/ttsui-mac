@@ -16,7 +16,9 @@ Subprocess is a workaround. You should refactor this to a HTTP server as a more 
 - Require user to manually load/unload models. Only allow user to select models that are loaded. Unloading a model should REALLY release resources; you must achieve this or explicitly stop to inform me of why this is not achieveable.
 - You MUST verify the project compiles and can build after each part of the code is completed.
 - DO NOT use any sort of Mock, Skip, etc. to fool me or to try to get the app functioning while not implementing the real functionailty. You will be harshly punished if you did so.
-- When python server side fails, an explicit and 
+- Let's use the explicit load and unload model. When the model is not loaded, disallow user to select it. Each select bar should be from left to right: check box, model name, load/unload button. You should show loading animation when loading model until the API returns. Those animations should update instantly as the button is pressed. Also allow pressing anywhere on the bar to select the model (but not load it). Allow loading every model, not only one for each mode. Carefully design the states.
+- When a model is loaded, log 1. memory before (un)loading 2. memory after (un)loading 3. time taken to load model. Also mind the UMA arch of apple computers.
+- Redirect all stdout and stderr of the python server to the python logging panel in the UI. append, not overwrite.
 
 
 ## Save state
