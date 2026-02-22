@@ -34,6 +34,7 @@ struct ModelSelectionRow: View {
             Text(displayName)
                 .font(.body)
                 .lineLimit(1)
+                .foregroundStyle(canSelect ? .primary : .secondary)
 
             // Load/Unload/Loading/Error button (right after model name)
             actionButton

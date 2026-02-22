@@ -3,8 +3,8 @@
 ## Save speaker
 
 Clone mode should have speakers:
-- Default: (No speaker). Can use `save as speaker...` button together with a text input (at most 16 chars, trimmed) to save as speaker.
-- clone from saved speaker. Replace `save as speaker` with `save`, to save to this very speaker. Allow modify name. 
+- Default: (No speaker). This should be an option in the speaker selection dropdown. Can use `save as speaker...` button together with a text input (at most 16 chars, trimmed) to save as speaker.
+- clone from saved speaker. Replace `save as speaker` with `save`, use this button to save to this very speaker. Allow modify name. 
 - Speakers metadata (name, text_reference (string or null)) should be saved in ~/.ttsui/clone/speakers.json, while their audio should be copied to ~/.ttsui/clone/speakers/<speaker_name>/audio.wav . Note that modifying existing speakers should be carefully handled, especially when dealing with replacing files./
 
 
