@@ -1,8 +1,9 @@
 import numpy as np
 import os
-import soundfile as sf
 
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+
+import soundfile as sf
 
 from mlx_audio.tts.utils import load_model
 

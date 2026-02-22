@@ -43,39 +43,19 @@ enum HTTPClientError: LocalizedError {
     }
 }
 
-/// Protocol for SSE log streaming delegate
-protocol TTSHTTPClientLogDelegate: AnyObject {
-    func httpClient(_ client: TTSHTTPClient, didReceiveLogEntry entry: LogEntry)
-    func httpClientDidDisconnect(_ client: TTSHTTPClient)
-}
-
 /// HTTP client for TTS server
-class TTSHTTPClient: NSObject, URLSessionDataDelegate {
+class TTSHTTPClient {
     static let shared = TTSHTTPClient()
 
     private let session: URLSession
     private let timeout: TimeInterval = 300 // 5 minutes for long generations
 
-    // SSE streaming
-    private var logStreamTask: URLSessionDataTask?
-    private weak var logDelegate: TTSHTTPClientLogDelegate?
-    private var accumulatedSSEData: Data = Data()
-
-    private override init() {
+    private init() {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 120
         config.timeoutIntervalForResource = 600
-        self.session = URLSession(configuration: config, delegate: nil, delegateQueue: .main)
-        super.init()
+        self.session = URLSession(configuration: config)
     }
-
-    /// Get a session that uses self as delegate for SSE streaming
-    private lazy var sseSession: URLSession = {
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 0
-        config.timeoutIntervalForResource = 0
-        return URLSession(configuration: config, delegate: self, delegateQueue: .main)
-    }()
 
     private func baseURL(port: Int) -> URL {
         URL(string: "http://127.0.0.1:\(port)")!
@@ -219,128 +199,6 @@ class TTSHTTPClient: NSObject, URLSessionDataDelegate {
             outputPath: outputPath
         )
         return try await post(port: port, path: "/generate/design", body: request)
-    }
-
-    // MARK: - Logs
-
-    /// Get all accumulated logs
-    func getLogs(port: Int) async throws -> LogsResponse {
-        return try await get(port: port, path: "/logs")
-    }
-
-    // MARK: - SSE Log Streaming
-
-    /// Start receiving log updates via SSE
-    func startLogStream(delegate: TTSHTTPClientLogDelegate, port: Int) {
-        stopLogStream()
-
-        logDelegate = delegate
-        accumulatedSSEData = Data()
-
-        let url = baseURL(port: port).appendingPathComponent("/logs/stream")
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 0 // No timeout for SSE
-
-        // Create a data task using the SSE session (with self as delegate)
-        logStreamTask = sseSession.dataTask(with: request)
-        logStreamTask?.resume()
-    }
-
-    /// Stop log stream
-    func stopLogStream() {
-        logStreamTask?.cancel()
-        logStreamTask = nil
-        accumulatedSSEData = Data()
-        logDelegate = nil
-    }
-
-    // MARK: - URLSessionDataDelegate
-
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        guard dataTask == logStreamTask else { return }
-
-        accumulatedSSEData.append(data)
-        parseAccumulatedSSEData()
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard task == logStreamTask else { return }
-
-        if let error = error {
-            print("SSE connection error: \(error)")
-        }
-
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.logDelegate?.httpClientDidDisconnect(self)
-        }
-    }
-
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
-        guard dataTask == logStreamTask else {
-            completionHandler(.allow)
-            return
-        }
-
-        if let httpResponse = response as? HTTPURLResponse,
-           httpResponse.statusCode == 200 {
-            completionHandler(.allow)
-        } else {
-            completionHandler(.cancel)
-        }
-    }
-
-    // MARK: - SSE Parsing
-
-    private func parseAccumulatedSSEData() {
-        guard let text = String(data: accumulatedSSEData, encoding: .utf8) else { return }
-
-        let events = text.components(separatedBy: "\n\n")
-
-        for i in 0..<(events.count - 1) {
-            let eventText = events[i]
-            if !eventText.isEmpty {
-                parseSSEEvent(eventText)
-            }
-        }
-
-        if events.count > 0 {
-            let lastEvent = events.last ?? ""
-            if let lastEventData = lastEvent.data(using: .utf8) {
-                accumulatedSSEData = lastEventData
-            }
-        }
-    }
-
-    private func parseSSEEvent(_ eventText: String) {
-        let lines = eventText.split(separator: "\n", omittingEmptySubsequences: false)
-
-        for line in lines {
-            let trimmedLine = String(line).trimmingCharacters(in: .whitespaces)
-
-            if trimmedLine.hasPrefix(":") {
-                continue
-            }
-
-            if trimmedLine.hasPrefix("data:") {
-                let jsonString = String(trimmedLine.dropFirst("data:".count)).trimmingCharacters(in: .whitespaces)
-
-                guard let jsonData = jsonString.data(using: .utf8) else { continue }
-
-                do {
-                    let serverEntry = try JSONDecoder().decode(ServerLogEntry.self, from: jsonData)
-                    let logEntry = serverEntry.toLogEntry()
-
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self else { return }
-                        self.logDelegate?.httpClient(self, didReceiveLogEntry: logEntry)
-                    }
-                } catch {
-                    print("Failed to decode SSE log entry: \(error), json: \(jsonString)")
-                }
-            }
-        }
     }
 }
 

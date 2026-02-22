@@ -15,15 +15,12 @@ Usage:
 import os
 import sys
 import gc
-import json
 import time
-import asyncio
 import threading
 from datetime import datetime
 from typing import Optional, Dict, List, Any
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass
 from enum import Enum
-from queue import Queue
 from contextlib import asynccontextmanager
 
 # Set HF endpoint for faster downloads in China
@@ -34,7 +31,6 @@ import numpy as np
 import soundfile as sf
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 import uvicorn
 
@@ -45,89 +41,9 @@ from mlx_audio.tts.utils import load_model
 # Logging Setup
 # =============================================================================
 
-class LogLevel(Enum):
-    DEBUG = "DEBUG"
-    INFO = "INFO"
-    WARNING = "WARNING"
-    ERROR = "ERROR"
-    CRITICAL = "CRITICAL"
-
-
-@dataclass
-class LogEntry:
-    timestamp: str
-    level: str
-    message: str
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-    def to_sse(self) -> str:
-        data = json.dumps(self.to_dict())
-        return f"data: {data}\n\n"
-
-
-class LogCapture:
-    """Custom logging handler that captures logs for API access and SSE streaming."""
-
-    def __init__(self):
-        self.entries: List[LogEntry] = []
-        self.subscribers: List[Queue] = []
-        self._lock = threading.Lock()
-
-    def log(self, level: LogLevel, message: str):
-        entry = LogEntry(
-            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3],
-            level=level.value,
-            message=message
-        )
-
-        with self._lock:
-            self.entries.append(entry)
-            # Notify all subscribers
-            for queue in self.subscribers:
-                try:
-                    queue.put_nowait(entry)
-                except:
-                    pass
-
-    def debug(self, message: str):
-        self.log(LogLevel.DEBUG, message)
-
-    def info(self, message: str):
-        self.log(LogLevel.INFO, message)
-
-    def warning(self, message: str):
-        self.log(LogLevel.WARNING, message)
-
-    def error(self, message: str):
-        self.log(LogLevel.ERROR, message)
-
-    def critical(self, message: str):
-        self.log(LogLevel.CRITICAL, message)
-
-    def subscribe(self) -> Queue:
-        queue = Queue()
-        with self._lock:
-            self.subscribers.append(queue)
-        return queue
-
-    def unsubscribe(self, queue: Queue):
-        with self._lock:
-            if queue in self.subscribers:
-                self.subscribers.remove(queue)
-
-    def get_entries(self) -> List[dict]:
-        with self._lock:
-            return [e.to_dict() for e in self.entries]
-
-    def clear(self):
-        with self._lock:
-            self.entries.clear()
-
-
-# Global logger instance
-logger = LogCapture()
+def log(message: str):
+    """Write log message to stderr for capture by Swift."""
+    print(message, file=sys.stderr, flush=True)
 
 
 def get_memory_mb() -> float:
@@ -202,11 +118,11 @@ class ModelRegistry:
 
             # Already loaded or loading
             if info.state == ModelState.LOADED:
-                logger.info(f"Model {model_id} already loaded")
+                log(f"Model {model_id} already loaded")
                 return info
 
             if info.state == ModelState.LOADING:
-                logger.warning(f"Model {model_id} is already loading")
+                log(f"[WARNING] Model {model_id} is already loading")
                 return info
 
             # Start loading
@@ -214,9 +130,9 @@ class ModelRegistry:
             info.error_message = None
 
         # Release lock during actual loading
-        logger.info(f"Loading model: {model_id}")
+        log(f"Loading model: {model_id}")
         memory_before = get_memory_mb()
-        logger.debug(f"Memory before load: {memory_before:.1f} MB")
+        log(f"Memory before load: {memory_before:.1f} MB")
 
         start_time = time.time()
 
@@ -235,15 +151,15 @@ class ModelRegistry:
                 info.memory_delta_mb = memory_delta
                 info.load_time_seconds = load_time
 
-            logger.info(f"Model loaded successfully")
-            logger.info(f"Memory after load: {memory_after:.1f} MB ({memory_delta:+.1f} MB)")
-            logger.info(f"Load time: {load_time:.1f} seconds")
+            log(f"Model loaded successfully")
+            log(f"Memory after load: {memory_after:.1f} MB ({memory_delta:+.1f} MB)")
+            log(f"Load time: {load_time:.1f} seconds")
 
             return info
 
-        except Exception as e:
+        except RuntimeError as e:
             error_msg = str(e)
-            logger.error(f"Failed to load model {model_id}: {error_msg}")
+            log(f"[ERROR] Failed to load model {model_id}: {error_msg}")
 
             with self._lock:
                 info = self._models[model_id]
@@ -261,57 +177,42 @@ class ModelRegistry:
             info = self._models[model_id]
 
             if info.state != ModelState.LOADED:
-                logger.info(f"Model {model_id} is not loaded (state: {info.state.value})")
+                log(f"Model {model_id} is not loaded (state: {info.state.value})")
                 return info
 
             info.state = ModelState.UNLOADING
 
-        logger.info(f"Unloading model: {model_id}")
+        log(f"Unloading model: {model_id}")
         memory_before = get_memory_mb()
-        logger.debug(f"Memory before unload: {memory_before:.1f} MB")
+        log(f"Memory before unload: {memory_before:.1f} MB")
 
-        try:
-            # Clear model reference
-            with self._lock:
-                info = self._models[model_id]
-                info.model_instance = None
+        # Clear model reference
+        with self._lock:
+            info = self._models[model_id]
+            info.model_instance = None
 
-            # Force garbage collection
-            gc.collect()
+        # Force garbage collection
+        gc.collect()
 
-            # Clear MLX cache if available
-            try:
-                import mlx.core as mx
-                mx.clear_cache()
-                logger.debug("Cleared MLX cache")
-            except ImportError:
-                pass
+        # Clear MLX cache
+        import mlx.core as mx
+        mx.clear_cache()
+        log("Cleared MLX cache")
 
-            memory_after = get_memory_mb()
-            memory_delta = memory_after - memory_before
+        memory_after = get_memory_mb()
+        memory_delta = memory_after - memory_before
 
-            with self._lock:
-                info = self._models[model_id]
-                info.state = ModelState.UNLOADED
-                info.memory_before_mb = memory_before
-                info.memory_after_mb = memory_after
-                info.memory_delta_mb = memory_delta
+        with self._lock:
+            info = self._models[model_id]
+            info.state = ModelState.UNLOADED
+            info.memory_before_mb = memory_before
+            info.memory_after_mb = memory_after
+            info.memory_delta_mb = memory_delta
 
-            logger.info(f"Model unloaded successfully")
-            logger.info(f"Memory after unload: {memory_after:.1f} MB ({memory_delta:+.1f} MB)")
+        log(f"Model unloaded successfully")
+        log(f"Memory after unload: {memory_after:.1f} MB ({memory_delta:+.1f} MB)")
 
-            return info
-
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Failed to unload model {model_id}: {error_msg}")
-
-            with self._lock:
-                info = self._models[model_id]
-                info.state = ModelState.ERROR
-                info.error_message = error_msg
-
-            raise
+        return info
 
 
 # Global registry instance
@@ -397,9 +298,9 @@ class ProgressUpdate(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    logger.info("TTS HTTP Server starting up...")
+    log("TTS HTTP Server starting up...")
     yield
-    logger.info("TTS HTTP Server shutting down...")
+    log("TTS HTTP Server shutting down...")
 
 
 app = FastAPI(
@@ -411,56 +312,13 @@ app = FastAPI(
 
 
 # =============================================================================
-# Health and Logging Endpoints
+# Health Endpoint
 # =============================================================================
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
-
-
-@app.get("/logs")
-async def get_logs():
-    """Get all accumulated logs."""
-    return JSONResponse(content={"logs": logger.get_entries()})
-
-
-@app.post("/logs/clear")
-async def clear_logs():
-    """Clear accumulated logs."""
-    logger.clear()
-    return {"status": "cleared"}
-
-
-@app.get("/logs/stream")
-async def log_stream():
-    """Server-Sent Events endpoint for real-time log streaming."""
-
-    async def event_generator():
-        queue = logger.subscribe()
-        try:
-            while True:
-                try:
-                    # Non-blocking get with timeout
-                    entry = queue.get(timeout=1.0)
-                    yield entry.to_sse()
-                except:
-                    # Send keepalive comment
-                    yield ": keepalive\n\n"
-                    await asyncio.sleep(0.1)
-        finally:
-            logger.unsubscribe(queue)
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        }
-    )
 
 
 # =============================================================================
@@ -552,133 +410,118 @@ def save_audio(audio, sample_rate: int, output_path: str):
 
 def report_progress(percent: int, message: str):
     """Report progress to log."""
-    logger.info(f"PROGRESS: {percent} {message}")
+    log(f"PROGRESS: {percent} {message}")
 
 
 @app.post("/generate/clone", response_model=GenerateResponse)
 async def generate_clone(request: GenerateCloneRequest):
     """Generate audio using clone mode."""
-    try:
-        info = registry.get_model(request.model_id)
-        if not info or info.state != ModelState.LOADED:
-            raise HTTPException(status_code=400, detail=f"Model {request.model_id} not loaded")
+    info = registry.get_model(request.model_id)
+    if not info or info.state != ModelState.LOADED:
+        raise HTTPException(status_code=400, detail=f"Model {request.model_id} not loaded")
 
-        model = info.model_instance
-        sample_rate = model.sample_rate
+    model = info.model_instance
+    sample_rate = model.sample_rate
 
-        report_progress(10, "Processing reference audio...")
+    report_progress(10, "Processing reference audio...")
 
-        kwargs = {
-            "text": request.text,
-            "ref_audio": request.ref_audio_path,
-        }
-        if request.ref_text:
-            kwargs["ref_text"] = request.ref_text
+    kwargs = {
+        "text": request.text,
+        "ref_audio": request.ref_audio_path,
+    }
+    if request.ref_text:
+        kwargs["ref_text"] = request.ref_text
 
-        report_progress(30, "Generating audio...")
+    report_progress(30, "Generating audio...")
 
-        results = list(model.generate(**kwargs))
+    results = list(model.generate(**kwargs))
 
-        if not results:
-            raise RuntimeError("No audio generated")
+    if not results:
+        raise RuntimeError("No audio generated")
 
-        report_progress(80, "Saving output...")
+    report_progress(80, "Saving output...")
 
-        audio = results[0].audio
-        save_audio(audio, sample_rate, request.output_path)
+    audio = results[0].audio
+    save_audio(audio, sample_rate, request.output_path)
 
-        report_progress(100, "Complete!")
-        logger.info(f"Generated clone audio: {request.output_path}")
+    report_progress(100, "Complete!")
+    log(f"Generated clone audio: {request.output_path}")
 
-        return GenerateResponse(output_path=request.output_path, success=True)
-
-    except Exception as e:
-        logger.error(f"Clone generation failed: {str(e)}")
-        return GenerateResponse(output_path=request.output_path, success=False, error=str(e))
+    return GenerateResponse(output_path=request.output_path, success=True)
 
 
 @app.post("/generate/control", response_model=GenerateResponse)
 async def generate_control(request: GenerateControlRequest):
     """Generate audio using control mode."""
-    try:
-        info = registry.get_model(request.model_id)
-        if not info or info.state != ModelState.LOADED:
-            raise HTTPException(status_code=400, detail=f"Model {request.model_id} not loaded")
+    info = registry.get_model(request.model_id)
+    if not info or info.state != ModelState.LOADED:
+        raise HTTPException(status_code=400, detail=f"Model {request.model_id} not loaded")
 
-        model = info.model_instance
-        sample_rate = model.sample_rate
+    model = info.model_instance
+    sample_rate = model.sample_rate
 
-        report_progress(10, "Preparing generation parameters...")
+    report_progress(10, "Preparing generation parameters...")
 
-        kwargs = {
-            "text": request.text,
-            "speaker": request.speaker,
-            "language": request.language,
-        }
-        if request.instruct:
-            kwargs["instruct"] = request.instruct
+    kwargs = {
+        "text": request.text,
+        "speaker": request.speaker,
+        "language": request.language,
+    }
+    if request.instruct:
+        kwargs["instruct"] = request.instruct
 
-        report_progress(30, "Generating audio...")
+    report_progress(30, "Generating audio...")
 
-        results = list(model.generate_custom_voice(**kwargs))
+    results = list(model.generate_custom_voice(**kwargs))
 
-        if not results:
-            raise RuntimeError("No audio generated")
+    if not results:
+        raise RuntimeError("No audio generated")
 
-        report_progress(80, "Saving output...")
+    report_progress(80, "Saving output...")
 
-        audio = results[0].audio
-        save_audio(audio, sample_rate, request.output_path)
+    audio = results[0].audio
+    save_audio(audio, sample_rate, request.output_path)
 
-        report_progress(100, "Complete!")
-        logger.info(f"Generated control audio: {request.output_path}")
+    report_progress(100, "Complete!")
+    log(f"Generated control audio: {request.output_path}")
 
-        return GenerateResponse(output_path=request.output_path, success=True)
-
-    except Exception as e:
-        logger.error(f"Control generation failed: {str(e)}")
-        return GenerateResponse(output_path=request.output_path, success=False, error=str(e))
+    return GenerateResponse(output_path=request.output_path, success=True)
 
 
 @app.post("/generate/design", response_model=GenerateResponse)
 async def generate_design(request: GenerateDesignRequest):
     """Generate audio using design mode."""
-    try:
-        info = registry.get_model(registry.DESIGN_MODEL)
-        if not info or info.state != ModelState.LOADED:
-            raise HTTPException(status_code=400, detail="VoiceDesign model not loaded")
+    info = registry.get_model(registry.DESIGN_MODEL)
+    if not info or info.state != ModelState.LOADED:
+        raise HTTPException(status_code=400, detail="VoiceDesign model not loaded")
 
-        model = info.model_instance
-        sample_rate = model.sample_rate
+    model = info.model_instance
+    sample_rate = model.sample_rate
 
-        report_progress(10, "Preparing voice design parameters...")
+    report_progress(10, "Preparing voice design parameters...")
 
-        kwargs = {
-            "text": request.text,
-            "language": request.language,
-            "instruct": request.instruct,
-        }
+    kwargs = {
+        "text": request.text,
+        "language": request.language,
+        "instruct": request.instruct,
+    }
 
-        report_progress(30, "Generating audio with custom voice design...")
+    report_progress(30, "Generating audio with custom voice design...")
 
-        results = list(model.generate_voice_design(**kwargs))
+    results = list(model.generate_voice_design(**kwargs))
 
-        if not results:
-            raise RuntimeError("No audio generated")
+    if not results:
+        raise RuntimeError("No audio generated")
 
-        report_progress(80, "Saving output...")
+    report_progress(80, "Saving output...")
 
-        audio = results[0].audio
-        save_audio(audio, sample_rate, request.output_path)
+    audio = results[0].audio
+    save_audio(audio, sample_rate, request.output_path)
 
-        report_progress(100, "Complete!")
-        logger.info(f"Generated design audio: {request.output_path}")
+    report_progress(100, "Complete!")
+    log(f"Generated design audio: {request.output_path}")
 
-        return GenerateResponse(output_path=request.output_path, success=True)
-
-    except Exception as e:
-        logger.error(f"Design generation failed: {str(e)}")
-        return GenerateResponse(output_path=request.output_path, success=False, error=str(e))
+    return GenerateResponse(output_path=request.output_path, success=True)
 
 
 # =============================================================================
@@ -693,7 +536,7 @@ def main():
     parser.add_argument("--port", type=int, default=8765, help="Port to bind to")
     args = parser.parse_args()
 
-    logger.info(f"Starting TTS HTTP Server on {args.host}:{args.port}")
+    log(f"Starting TTS HTTP Server on {args.host}:{args.port}")
 
     uvicorn.run(
         app,

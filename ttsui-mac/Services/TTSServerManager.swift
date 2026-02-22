@@ -27,7 +27,7 @@ enum ServerState: Equatable {
 }
 
 /// Manages the Python TTS server lifecycle
-class TTSServerManager: ObservableObject, TTSHTTPClientLogDelegate {
+class TTSServerManager: ObservableObject {
     static let shared = TTSServerManager()
 
     @Published var state: ServerState = .stopped
@@ -87,7 +87,7 @@ class TTSServerManager: ObservableObject, TTSHTTPClientLogDelegate {
         environment["PYTHONUNBUFFERED"] = "1"
         process.environment = environment
 
-        // Capture stdout and stderr for startup errors
+        // Capture stdout AND stderr for logs
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
         process.standardOutput = stdoutPipe
@@ -95,7 +95,23 @@ class TTSServerManager: ObservableObject, TTSHTTPClientLogDelegate {
 
         self.process = process
 
-        // Handle stderr (startup messages)
+        // Handle stdout (main log source - Python prints to stderr for all logs)
+        stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            if let output = String(data: data, encoding: .utf8) {
+                let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    DispatchQueue.main.async {
+                        let entry = LogEntry(timestamp: Date(), content: trimmed, type: .stdout)
+                        self?.serverLogs.append(entry)
+                        self?.handleLogEntry(entry)
+                    }
+                }
+            }
+        }
+
+        // Handle stderr (errors and main log output)
         stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
@@ -105,6 +121,7 @@ class TTSServerManager: ObservableObject, TTSHTTPClientLogDelegate {
                     DispatchQueue.main.async {
                         let entry = LogEntry(timestamp: Date(), content: trimmed, type: .stderr)
                         self?.serverLogs.append(entry)
+                        self?.handleLogEntry(entry)
                     }
                 }
             }
@@ -115,7 +132,6 @@ class TTSServerManager: ObservableObject, TTSHTTPClientLogDelegate {
             DispatchQueue.main.async {
                 self?.healthCheckTimer?.invalidate()
                 self?.healthCheckTimer = nil
-                self?.httpClient.stopLogStream()
 
                 if let continuation = self?.serverReadyContinuation {
                     self?.serverReadyContinuation = nil
@@ -144,12 +160,6 @@ class TTSServerManager: ObservableObject, TTSHTTPClientLogDelegate {
             // Start health monitoring
             startHealthMonitoring()
 
-            // Fetch any logs that were emitted before SSE connection
-            await fetchInitialLogs()
-
-            // Start log streaming
-            httpClient.startLogStream(delegate: self, port: currentPort)
-
         } catch {
             process.terminate()
             self.process = nil
@@ -159,7 +169,6 @@ class TTSServerManager: ObservableObject, TTSHTTPClientLogDelegate {
 
     /// Stop the Python server
     func stopServer() {
-        httpClient.stopLogStream()
         healthCheckTimer?.invalidate()
         healthCheckTimer = nil
 
@@ -285,47 +294,11 @@ class TTSServerManager: ObservableObject, TTSHTTPClientLogDelegate {
         }
     }
 
-    private func fetchInitialLogs() async {
-        do {
-            let response = try await httpClient.getLogs(port: currentPort)
-            for serverEntry in response.logs {
-                let logEntry = serverEntry.toLogEntry()
-                await MainActor.run {
-                    self.serverLogs.append(logEntry)
-                    TTSService.shared.addLogEntry(logEntry)
-                }
-            }
-        } catch {
-            print("Failed to fetch initial logs: \(error)")
-        }
-    }
+    private func handleLogEntry(_ entry: LogEntry) {
+        TTSService.shared.addLogEntry(entry)
 
-    // MARK: - TTSHTTPClientLogDelegate
-
-    func httpClient(_ client: TTSHTTPClient, didReceiveLogEntry entry: LogEntry) {
-        DispatchQueue.main.async {
-            self.serverLogs.append(entry)
-
-            Task { @MainActor in
-                TTSService.shared.addLogEntry(entry)
-            }
-
-            if let progress = ProgressUpdate(from: entry.content) {
-                Task { @MainActor in
-                    TTSService.shared.updateProgress(percent: progress.percent, message: progress.message)
-                }
-            }
-        }
-    }
-
-    func httpClientDidDisconnect(_ client: TTSHTTPClient) {
-        if state.isRunning {
-            Task {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                if self.state.isRunning {
-                    self.httpClient.startLogStream(delegate: self, port: self.currentPort)
-                }
-            }
+        if let progress = ProgressUpdate(from: entry.content) {
+            TTSService.shared.updateProgress(percent: progress.percent, message: progress.message)
         }
     }
 }
