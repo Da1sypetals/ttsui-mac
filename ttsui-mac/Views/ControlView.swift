@@ -107,8 +107,6 @@ struct ControlView: View {
                     GenerateButton(
                         title: "Generate",
                         isLoading: viewModel.state.isProcessing,
-                        progress: progressValue,
-                        progressMessage: progressMessage,
                         isEnabled: viewModel.canGenerate,
                         cancelAction: {
                             viewModel.cancel()
@@ -150,20 +148,6 @@ struct ControlView: View {
             }
             .padding()
         }
-    }
-
-    private var progressValue: Int? {
-        if case .generating(let progress, _) = viewModel.state {
-            return progress
-        }
-        return nil
-    }
-
-    private var progressMessage: String? {
-        if case .generating(_, let message) = viewModel.state {
-            return message
-        }
-        return nil
     }
 }
 

@@ -296,10 +296,6 @@ class TTSServerManager: ObservableObject {
 
     private func handleLogEntry(_ entry: LogEntry) {
         TTSService.shared.addLogEntry(entry)
-
-        if let progress = ProgressUpdate(from: entry.content) {
-            TTSService.shared.updateProgress(percent: progress.percent, message: progress.message)
-        }
     }
 }
 

@@ -25,33 +25,6 @@ struct LogEntry: Identifiable, Equatable {
     }
 }
 
-/// Progress update parsed from log content
-struct ProgressUpdate {
-    let percent: Int
-    let message: String
-
-    init?(from string: String) {
-        // Parse "PROGRESS: <percent> <message>" format
-        // The string might have a level prefix like "[INFO] PROGRESS: ..."
-        var content = string
-
-        // Strip level prefix if present
-        if let bracketRange = content.range(of: "] ") {
-            content = String(content[bracketRange.upperBound...])
-        }
-
-        guard content.hasPrefix("PROGRESS:") else { return nil }
-
-        let parts = content.dropFirst("PROGRESS:".count).trimmingCharacters(in: .whitespaces).split(separator: " ", maxSplits: 1)
-
-        guard parts.count >= 2,
-              let percent = Int(parts[0]) else { return nil }
-
-        self.percent = percent
-        self.message = String(parts[1])
-    }
-}
-
 /// Result from TTS generation
 enum TTSResult {
     case success(outputURL: URL)
@@ -62,7 +35,7 @@ enum TTSResult {
 enum TTSState: Equatable {
     case idle
     case loading
-    case generating(progress: Int, message: String)
+    case generating
     case saving
     case completed(outputURL: URL)
     case failed(error: String)
@@ -82,8 +55,8 @@ enum TTSState: Equatable {
             return true
         case (.loading, .loading):
             return true
-        case (.generating(let lp, let lm), .generating(let rp, let rm)):
-            return lp == rp && lm == rm
+        case (.generating, .generating):
+            return true
         case (.saving, .saving):
             return true
         case (.completed(let l), .completed(let r)):

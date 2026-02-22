@@ -25,16 +25,11 @@ class TTSService: ObservableObject {
         TTSServerManager.shared.currentPort
     }
 
-    // MARK: - Log and Progress Handling (called from TTSServerManager)
+    // MARK: - Log Handling (called from TTSServerManager)
 
     /// Add a log entry (called from TTSServerManager SSE stream)
     func addLogEntry(_ entry: LogEntry) {
         logEntries.append(entry)
-    }
-
-    /// Update progress state (called from TTSServerManager SSE stream)
-    func updateProgress(percent: Int, message: String) {
-        state = .generating(progress: percent, message: message)
     }
 
     // MARK: - Model Management
