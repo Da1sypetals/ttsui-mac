@@ -44,6 +44,21 @@ class FileService {
         cloneDirectory.appendingPathComponent("generated")
     }
 
+    /// Directory for Clone speakers data
+    var cloneSpeakersDirectory: URL {
+        cloneDirectory.appendingPathComponent("speakers")
+    }
+
+    /// Directory for Clone speakers audio files
+    var cloneSpeakersAudioDirectory: URL {
+        cloneSpeakersDirectory.appendingPathComponent("audio")
+    }
+
+    /// Path to Clone speakers JSON file
+    var cloneSpeakersJSONPath: URL {
+        cloneDirectory.appendingPathComponent("speakers.json")
+    }
+
     /// Directory for Control mode
     var controlDirectory: URL {
         baseDirectory.appendingPathComponent("control")
@@ -188,5 +203,51 @@ class FileService {
         }
 
         try fileManager.copyItem(at: source, to: destination)
+    }
+
+    // MARK: - Speaker Management
+
+    /// Load speakers from JSON file
+    func loadSpeakers() -> [CloneSpeaker] {
+        guard fileManager.fileExists(atPath: cloneSpeakersJSONPath.path),
+              let data = try? Data(contentsOf: cloneSpeakersJSONPath) else {
+            return []
+        }
+
+        do {
+            return try JSONDecoder().decode([CloneSpeaker].self, from: data)
+        } catch {
+            print("Failed to load speakers: \(error)")
+            return []
+        }
+    }
+
+    /// Save speakers to JSON file
+    func saveSpeakers(_ speakers: [CloneSpeaker]) throws {
+        try ensureDirectoryExists(at: cloneDirectory)
+        let data = try JSONEncoder().encode(speakers)
+        try data.write(to: cloneSpeakersJSONPath)
+    }
+
+    /// Copy audio file to speakers directory, returns the new filename
+    func copyAudioToSpeakers(from sourceURL: URL) throws -> String {
+        try ensureDirectoryExists(at: cloneSpeakersAudioDirectory)
+
+        // Generate unique filename with original name appended
+        let uuid = UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8).lowercased()
+        let originalName = sourceURL.deletingPathExtension().lastPathComponent
+        let fileName = "speaker_\(uuid)_\(originalName).wav"
+        let destinationURL = cloneSpeakersAudioDirectory.appendingPathComponent(fileName)
+
+        try fileManager.copyItem(at: sourceURL, to: destinationURL)
+        return fileName
+    }
+
+    /// Delete speaker audio file
+    func deleteSpeakerAudio(filename: String) throws {
+        let audioPath = cloneSpeakersAudioDirectory.appendingPathComponent(filename)
+        if fileManager.fileExists(atPath: audioPath.path) {
+            try fileManager.removeItem(at: audioPath)
+        }
     }
 }

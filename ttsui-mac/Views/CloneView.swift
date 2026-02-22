@@ -10,6 +10,7 @@ import SwiftUI
 /// View for Clone mode - voice cloning from reference audio
 struct CloneView: View {
     @ObservedObject var viewModel: CloneViewModel
+    @State private var editedSpeakerName: String = ""
 
     var body: some View {
         ScrollView {
@@ -31,6 +32,109 @@ struct CloneView: View {
                         }
                     }
                 )
+
+                // Speaker Selection
+                GroupBox(label: Label("Speaker", systemImage: "person.wave.2")) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        // Speaker picker
+                        Picker("", selection: Binding(
+                            get: { viewModel.selectedSpeaker },
+                            set: { speaker in
+                                viewModel.selectSpeaker(speaker)
+                                if let speaker = speaker {
+                                    editedSpeakerName = speaker.name
+                                } else {
+                                    editedSpeakerName = ""
+                                }
+                            }
+                        )) {
+                            Text("(No Speaker)").tag(nil as CloneSpeaker?)
+                            ForEach(viewModel.speakers) { speaker in
+                                Text(speaker.name).tag(speaker as CloneSpeaker?)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 200)
+
+                        // Speaker info and controls when speaker is selected
+                        if let speaker = viewModel.selectedSpeaker {
+                            // Speaker details
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Image(systemName: "waveform")
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 16)
+                                    Text("Audio: \(speaker.audioFileName)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+
+                                HStack {
+                                    Image(systemName: "text.alignleft")
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 16)
+                                    if let refText = speaker.textReference, !refText.isEmpty {
+                                        Text(refText)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                    } else {
+                                        Text("No reference text")
+                                            .font(.caption)
+                                            .foregroundStyle(.tertiary)
+                                            .italic()
+                                    }
+                                }
+                            }
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.secondary.opacity(0.08))
+                            .cornerRadius(6)
+
+                            // Name field and buttons
+                            HStack(spacing: 12) {
+                                TextField("Speaker name", text: $editedSpeakerName)
+                                    .frame(width: 150)
+                                    .onSubmit {
+                                        viewModel.saveCurrentSpeaker(newName: editedSpeakerName)
+                                    }
+
+                                Button("Save") {
+                                    viewModel.saveCurrentSpeaker(newName: editedSpeakerName)
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+
+                                Button("Delete") {
+                                    viewModel.deleteSpeaker(speaker)
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .tint(.red)
+                            }
+                        } else {
+                            // Save as new speaker button
+                            Button("Save as speaker...") {
+                                viewModel.showSaveSpeakerSheet = true
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(viewModel.effectiveReferenceAudio == nil)
+                        }
+                    }
+                    .onAppear {
+                        if let speaker = viewModel.selectedSpeaker {
+                            editedSpeakerName = speaker.name
+                        }
+                    }
+                    .onChange(of: viewModel.selectedSpeaker) { _, newSpeaker in
+                        if let speaker = newSpeaker {
+                            editedSpeakerName = speaker.name
+                        }
+                    }
+                }
 
                 // Reference Audio Section
                 GroupBox(label: Label("Reference Audio", systemImage: "waveform")) {
@@ -101,6 +205,17 @@ struct CloneView: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 .buttonStyle(.plain)
+                            }
+                            .padding(8)
+                            .background(Color.secondary.opacity(0.1))
+                            .cornerRadius(6)
+                        } else if case .speaker(let speaker) = viewModel.referenceAudioSource {
+                            HStack {
+                                Image(systemName: "person.wave.2.fill")
+                                    .foregroundStyle(.green)
+                                Text("Speaker: \(speaker.name)")
+                                    .lineLimit(1)
+                                Spacer()
                             }
                             .padding(8)
                             .background(Color.secondary.opacity(0.1))
@@ -185,6 +300,9 @@ struct CloneView: View {
                 }
             }
             .padding()
+        }
+        .sheet(isPresented: $viewModel.showSaveSpeakerSheet) {
+            SaveSpeakerSheet(viewModel: viewModel)
         }
     }
 

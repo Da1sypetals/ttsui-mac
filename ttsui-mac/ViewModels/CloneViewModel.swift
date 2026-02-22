@@ -31,6 +31,11 @@ class CloneViewModel: ObservableObject {
     // Track the specific recorded audio being used
     @Published var selectedRecordedURL: URL?
 
+    // Speaker management
+    @Published var speakers: [CloneSpeaker] = []
+    @Published var selectedSpeaker: CloneSpeaker?
+    @Published var showSaveSpeakerSheet: Bool = false
+
     // Generation state
     @Published var state: TTSState = .idle
     @Published var generatedAudioURL: URL?
@@ -83,6 +88,9 @@ class CloneViewModel: ObservableObject {
                 self?.objectWillChange.send()
             }
             .store(in: &cancellables)
+
+        // Load speakers from storage
+        loadSpeakers()
 
         // Load initial model states
         Task {
@@ -203,6 +211,7 @@ class CloneViewModel: ObservableObject {
         case none
         case file(URL)
         case recorded(URL)
+        case speaker(CloneSpeaker)
 
         var displayText: String? {
             switch self {
@@ -212,6 +221,8 @@ class CloneViewModel: ObservableObject {
                 return url.lastPathComponent
             case .recorded(let url):
                 return url.lastPathComponent
+            case .speaker(let speaker):
+                return speaker.audioFileName
             }
         }
     }
@@ -238,6 +249,8 @@ class CloneViewModel: ObservableObject {
             return url
         case .recorded(let url):
             return url
+        case .speaker(let speaker):
+            return speaker.audioURL
         }
     }
 
@@ -270,6 +283,7 @@ class CloneViewModel: ObservableObject {
     func clearReferenceAudio() {
         referenceAudioSource = .none
         referenceAudioURL = nil
+        selectedSpeaker = nil
     }
 
     /// Generate audio
@@ -360,5 +374,132 @@ class CloneViewModel: ObservableObject {
     /// Stop playback
     func stopPlayback() {
         audioService.stopPlayback()
+    }
+
+    // MARK: - Speaker Management
+
+    /// Load speakers from storage
+    func loadSpeakers() {
+        speakers = fileService.loadSpeakers()
+    }
+
+    /// Select a speaker and load its audio and text
+    func selectSpeaker(_ speaker: CloneSpeaker?) {
+        guard let speaker = speaker else {
+            selectedSpeaker = nil
+            referenceAudioSource = .none
+            referenceText = ""
+            return
+        }
+
+        selectedSpeaker = speaker
+        referenceAudioSource = .speaker(speaker)
+        referenceText = speaker.textReference ?? ""
+    }
+
+    /// Save current configuration as a new speaker
+    func saveAsNewSpeaker(name: String) {
+        // Validate name
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty, trimmedName.count <= 16 else { return }
+
+        guard let audioURL = effectiveReferenceAudio else { return }
+
+        do {
+            // Copy audio to speakers directory
+            let audioFileName = try fileService.copyAudioToSpeakers(from: audioURL)
+
+            // Create new speaker
+            let newSpeaker = CloneSpeaker(
+                id: UUID(),
+                name: trimmedName,
+                audioFileName: audioFileName,
+                textReference: referenceText.isEmpty ? nil : referenceText
+            )
+
+            // Add to speakers list and save
+            speakers.append(newSpeaker)
+            try fileService.saveSpeakers(speakers)
+
+            // Select the new speaker
+            selectSpeaker(newSpeaker)
+        } catch {
+            errorMessage = "Failed to save speaker: \(error.localizedDescription)"
+        }
+    }
+
+    /// Save current configuration to the selected speaker
+    /// - Parameter newName: Optional new name for the speaker (if nil, keeps current name)
+    func saveCurrentSpeaker(newName: String? = nil) {
+        guard let speaker = selectedSpeaker else { return }
+        guard let audioURL = effectiveReferenceAudio else { return }
+
+        // Determine the name to use
+        let finalName: String
+        if let newName = newName {
+            let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, trimmed.count <= 16 else { return }
+            finalName = trimmed
+        } else {
+            finalName = speaker.name
+        }
+
+        do {
+            // Copy new audio if source is not the speaker's own audio
+            let newAudioFileName: String
+            if case .speaker = referenceAudioSource {
+                // Already using speaker's audio, no need to copy
+                newAudioFileName = speaker.audioFileName
+            } else {
+                // Different audio source, copy to speakers directory
+                newAudioFileName = try fileService.copyAudioToSpeakers(from: audioURL)
+            }
+
+            // Update speaker in list
+            if let index = speakers.firstIndex(where: { $0.id == speaker.id }) {
+                speakers[index] = CloneSpeaker(
+                    id: speaker.id,
+                    name: finalName,
+                    audioFileName: newAudioFileName,
+                    textReference: referenceText.isEmpty ? nil : referenceText
+                )
+                try fileService.saveSpeakers(speakers)
+
+                // Update selected speaker reference
+                selectedSpeaker = speakers[index]
+                referenceAudioSource = .speaker(speakers[index])
+            }
+        } catch {
+            errorMessage = "Failed to update speaker: \(error.localizedDescription)"
+        }
+    }
+
+    /// Delete a speaker
+    func deleteSpeaker(_ speaker: CloneSpeaker) {
+        guard let index = speakers.firstIndex(where: { $0.id == speaker.id }) else { return }
+
+        // Remove from list
+        speakers.remove(at: index)
+
+        // Delete audio file
+        do {
+            try fileService.deleteSpeakerAudio(filename: speaker.audioFileName)
+        } catch {
+            print("Failed to delete speaker audio: \(error)")
+        }
+
+        // Save updated list
+        do {
+            try fileService.saveSpeakers(speakers)
+        } catch {
+            errorMessage = "Failed to save speakers: \(error.localizedDescription)"
+        }
+
+        // Clear selection if this was the selected speaker
+        if selectedSpeaker?.id == speaker.id {
+            selectedSpeaker = nil
+            referenceAudioSource = .none
+            referenceText = ""
+        }
     }
 }
